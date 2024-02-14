@@ -3,11 +3,12 @@
 #include <iostream>
 #include <random>
 #include <ctime>   // For time()
-#include <climits>
+#include <climits> // Ceiling
 #include <cmath> // for pow()
-#include <numeric>
+#include <numeric> // The weird probability function
 #include <fstream> // For reading in the file!
 #include <sstream> // For parsing input
+#include <algorithm> // For sort
 
 const static int CEIL = INT_MAX;
 
@@ -199,14 +200,14 @@ int makeRandomPick(const std::vector<double>& weights) {
     while (selectedIndex < cumulativeProbabilities.size() && cumulativeProbabilities[selectedIndex] < randomValue) {
         selectedIndex++;
     }
-
+    
     return selectedIndex;
 }
 
 // Ant Colony Optimization NOW!
 // This function will have a single ant going through the graph one node at a time
 // constrained to move in a cycle
-std::pair<std::vector<int>,int> traverseGraph(std::vector<std::vector<int>> graph, int sourceNode, std::vector<std::vector<double>> &pheromones){
+std::pair<std::vector<int>,int> traverseGraph(std::vector<std::vector<int>> graph, int sourceNode, std::vector<std::vector<double>> &pheromones, int graphSize){
     double ALPHA = 0.9;
     double BETA = 1.5;
     // Create a visited graph for this traversal!
@@ -220,10 +221,9 @@ std::pair<std::vector<int>,int> traverseGraph(std::vector<std::vector<int>> grap
     int steps = 0;
     int currentCity = sourceNode;
     int total_length = 0;
-    while (steps < graph.size()){
+    while (steps < graphSize-1){
         std::vector<int> jumpNeighbors;
         std::vector<double> jumpValues;
-        
         double cumProbabilities = 0.0; // Cumulative probablities, used for generating weighted jump value
         for (int i=0;i<graph.size();i++){
             if (visited[i] == 0){
@@ -258,8 +258,70 @@ std::pair<std::vector<int>,int> traverseGraph(std::vector<std::vector<int>> grap
         cycle.push_back(currentCity);
         steps++;
     }
+    // Adjust path to home
+    if (sourceNode < currentCity){
+        total_length += graph[currentCity][sourceNode];
+    } else {
+        total_length += graph[sourceNode][currentCity];
+    }
     return std::make_pair(cycle,total_length);
 }
+
+void degradePheromones(std::vector<std::vector<double>> pheromones,double degradation){
+    for(int i=0;i<pheromones.size();i++){
+        for(int j=0;j<pheromones.size();j++){
+            pheromones[i][j] *= degradation;
+        }
+    }
+}
+
+int antColonyOptimization(std::vector<std::vector<int>> graph, std::vector<std::vector<double>> &pheromones, int iterations, int ants, int q=10, double degradation=0.9){
+    std::vector<int> bestCycle;
+    int bestLength = CEIL; // Max integer for the 'best cycle'
+
+    for (int i=0; i < iterations; i++){
+        // This is ugly, probably will need helper function to sort!
+        std::vector<std::pair<std::vector<int>,int>> cycles;
+        for (int j=0; j<ants; j++){
+            std::pair<std::vector<int>,int> currentPair = traverseGraph(graph,(std::rand()%graph.size()+1),pheromones,graph.size());
+            cycles.push_back(currentPair);
+        }
+        // So once we have generated our 50 random paths, we need to sort for the best fit ones
+        std::sort(cycles.begin(),cycles.end(), [](const auto& a, const auto& b){
+            return a.second > b.second;
+        });
+        int length = cycles.size() / 2; // For loop
+        for (int k=0;k<length;k++){ // Update pheromones
+            std::vector<int> cycle = cycles[i].first;
+            int currLength = cycles[i].second;
+            if (currLength<bestLength){
+                bestLength = currLength;
+                bestCycle = cycle;
+            }
+            double delta = q / currLength;
+            int j = 0;
+            while (j < cycle.size()-1){
+                int currCity = cycle[j];
+                int nextCity = cycle[j+1];
+                if (currCity < nextCity){
+                    pheromones[nextCity][currCity] += delta;
+                } else{
+                    pheromones[currCity][nextCity] += delta;
+                }
+                j += 1;
+            }
+            // Now adjust pheromones for the route back to home
+            if (cycle[0] < cycle[j]){
+                pheromones[cycle[j]][cycle[0]] += delta;
+            } else {
+                pheromones[cycle[0]][cycle[j]] += delta;
+            }
+            degradePheromones(pheromones,degradation);
+        }
+    }
+    return bestLength;
+}
+
 
 // Generate base pheromone vector
 std::vector<std::vector<double>> generatePheromones(std::vector<std::vector<int>> graph, double defaultValue){
@@ -275,6 +337,7 @@ std::vector<std::vector<double>> generatePheromones(std::vector<std::vector<int>
         }
         pheromones.push_back(currentLevel);
     }
+
     return pheromones;
 }
 int main(int argc, char** argv){
@@ -294,6 +357,7 @@ int main(int argc, char** argv){
                                                     { 10, 0, },
                                                     { 15, 35, 0, },
                                                     { 20, 25, 30, 0 } };
+    std::cout << "The size of the static cities is " << static_cities.size() << std::endl;
     // We can use the above deep copy to attempt to run a brute force on this
     std::cout << "Brute forcing the static city layout!" << std::endl;
     std::vector<int> visited(static_cities.size(), 0);
@@ -322,14 +386,13 @@ int main(int argc, char** argv){
     // Generate pheromone vector
     std::vector<std::vector<double>> pheromones = generatePheromones(static_cities,10);
     printVector(pheromones);
-    std::cout << "Testing ant traversal" << std::endl;
+
     int start_city = (std::rand()%static_cities.size()) + 1;
-    std::pair<std::vector<int>,int> returns = traverseGraph(static_cities,start_city,pheromones);
+    std::cout << "Testing ant traversal, starting at: " << start_city << std::endl;
+    int sz = static_cities.size();
+    //std::pair<std::vector<int>,int> returns = traverseGraph(static_cities,start_city,pheromones,sz);
+    int length = antColonyOptimization(static_cities,pheromones,100,50);
 
-    std::vector<int> path = returns.first;
-    int length = returns.second;
-
-    printVector1D(path);
     std::cout << "Total length: " << length << std::endl;
     
 
