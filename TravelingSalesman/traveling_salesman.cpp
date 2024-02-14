@@ -4,7 +4,8 @@
 #include <random>
 #include <ctime>   // For time()
 #include <climits>
-#include <thread> // Trying to multithread
+#include <cmath> // for pow()
+#include <numeric>
 #include <fstream> // For reading in the file!
 #include <sstream> // For parsing input
 
@@ -20,6 +21,18 @@ void printVector(const std::vector<std::vector<T>>& vec) {
         std::cout << std::endl;
     }
 }
+
+template<typename T>
+void printVector1D(const std::vector<T>& vec) {
+    std::cout << "Vector: { ";
+    for (int i=0;i<vec.size();i++){
+        std::cout << vec[i] << " ";   
+    }
+    std::cout << "}" << std::endl;
+
+}
+
+
 
 class Map{
     public:
@@ -170,30 +183,99 @@ int tspBruteForce(std::vector<std::vector<int>> graph,int startCity, int currLev
     }
 }
 
+int makeRandomPick(const std::vector<double>& weights) {
+    // Calculate cumulative probabilities
+    std::vector<double> cumulativeProbabilities(weights.size());
+    std::partial_sum(weights.begin(), weights.end(), cumulativeProbabilities.begin());
+
+    // Generate a random number between 0 and the sum of weights
+    static std::random_device rd;
+    static std::mt19937 gen(rd());
+    std::uniform_real_distribution<> dis(0.0, cumulativeProbabilities.back());
+    double randomValue = dis(gen);
+
+    // Find the index corresponding to the first cumulative probability that is greater than the random number
+    int selectedIndex = 0;
+    while (selectedIndex < cumulativeProbabilities.size() && cumulativeProbabilities[selectedIndex] < randomValue) {
+        selectedIndex++;
+    }
+
+    return selectedIndex;
+}
+
 // Ant Colony Optimization NOW!
 // This function will have a single ant going through the graph one node at a time
 // constrained to move in a cycle
-void traverseGraph(std::vector<std::vector<int>> graph, int sourceNode, std::vector<std::vector<int>> pheromones){
-    float ALPHA = 0.9;
-    float BETA = 1.5;
+std::pair<std::vector<int>,int> traverseGraph(std::vector<std::vector<int>> graph, int sourceNode, std::vector<std::vector<double>> &pheromones){
+    double ALPHA = 0.9;
+    double BETA = 1.5;
+    // Create a visited graph for this traversal!
     std::vector<int> visited(graph.size(),0);
-    visited[sourceNode] = 1;
+    visited[sourceNode] = 1; // Mark curr City to visited
 
+    // Initialize The Path Taken
     std::vector<int> cycle = {sourceNode};
+    int cycleLength = 0;
+
     int steps = 0;
-    int current = sourceNode;
+    int currentCity = sourceNode;
     int total_length = 0;
     while (steps < graph.size()){
         std::vector<int> jumpNeighbors;
-        std::vector<int> jumpValues;
-
+        std::vector<double> jumpValues;
+        
+        double cumProbabilities = 0.0; // Cumulative probablities, used for generating weighted jump value
         for (int i=0;i<graph.size();i++){
             if (visited[i] == 0){
-                float pheromoneLevel = std::max(1)
+                // We need to make sure we are reading the graph right due to the triangular format
+                if (currentCity < i){
+                    // If the current city is less than i, then we can just use graph[i][currentCity]
+                    double pheromoneLevel = std::max(pheromones[i][currentCity],(0.00001));
+                    double v = (std::pow(pheromoneLevel,ALPHA)) / (pow(graph[i][currentCity],BETA));
+                    jumpNeighbors.push_back(i);
+                    jumpValues.push_back(v);
+
+                } else {
+                    // If the current city is GREATER than i, then we can just use graph[currentCity][i]
+                    double pheromoneLevel = std::max(pheromones[currentCity][i],(0.00001));
+                    double v = (std::pow(pheromoneLevel,ALPHA)) / (pow(graph[currentCity][i],BETA));
+                    jumpNeighbors.push_back(i);
+                    jumpValues.push_back(v);
+
+                }
             }
         }
+        // Now we need to choose the next node
+        int index = makeRandomPick(jumpValues);
+        int jump = jumpNeighbors[index];
+        visited[jump] = 1;
+        if (jump < currentCity){
+            total_length = total_length + graph[currentCity][jump];
+        } else{
+            total_length = total_length + graph[jump][currentCity];
+        }
+        currentCity = jump;
+        cycle.push_back(currentCity);
+        steps++;
     }
+    return std::make_pair(cycle,total_length);
+}
 
+// Generate base pheromone vector
+std::vector<std::vector<double>> generatePheromones(std::vector<std::vector<int>> graph, double defaultValue){
+    std::vector<std::vector<double>> pheromones;
+    for (int i=0;i<graph.size();i++){
+        std::vector<double> currentLevel;
+        for (int j=0;j<graph[i].size();j++){
+            if (i != j){
+                currentLevel.push_back(defaultValue);
+            } else{
+                currentLevel.push_back(0);
+            }
+        }
+        pheromones.push_back(currentLevel);
+    }
+    return pheromones;
 }
 int main(int argc, char** argv){
     // Seed the random number generator!
@@ -222,18 +304,34 @@ int main(int argc, char** argv){
 
     // Nearest Neighbor Time
     // Copy map
-    std::vector<std::vector<int>> mapCopy = m.getMap();
-    std::cout << "\nNow we're trying the nearest neighbor method on our input generated map!" << std::endl;
-    // Declare mini
-    int mini = CEIL;
-    for(int i=0;i<mapCopy.size();i++){
-        std::vector<int> neighbors(mapCopy.size(),0);
-        // visited[i] = 1; Not needed here
-        std::cout << "Stariting at city: " << i << std::endl;
-        int final = tspNearestNeighbor(mapCopy,i,i,neighbors,0);
-        std::cout << "The best route at this level is: " << final << std::endl;
-        mini = std::min(mini,final);
-    }
-    std::cout << "The best route found is: " << mini << std::endl;
+    // std::vector<std::vector<int>> mapCopy = m.getMap();
+    // std::cout << "\nNow we're trying the nearest neighbor method on our input generated map!" << std::endl;
+    // // Declare mini
+    // int mini = CEIL;
+    // for(int i=0;i<mapCopy.size();i++){
+    //     std::vector<int> neighbors(mapCopy.size(),0);
+    //     // visited[i] = 1; Not needed here
+    //     std::cout << "Stariting at city: " << i << std::endl;
+    //     int final = tspNearestNeighbor(mapCopy,i,i,neighbors,0);
+    //     std::cout << "The best route at this level is: " << final << std::endl;
+    //     mini = std::min(mini,final);
+    // }
+    // std::cout << "The best route found is: " << mini << std::endl;
+    
+
+    // Generate pheromone vector
+    std::vector<std::vector<double>> pheromones = generatePheromones(static_cities,10);
+    printVector(pheromones);
+    std::cout << "Testing ant traversal" << std::endl;
+    int start_city = (std::rand()%static_cities.size()) + 1;
+    std::pair<std::vector<int>,int> returns = traverseGraph(static_cities,start_city,pheromones);
+
+    std::vector<int> path = returns.first;
+    int length = returns.second;
+
+    printVector1D(path);
+    std::cout << "Total length: " << length << std::endl;
+    
+
 
 }
