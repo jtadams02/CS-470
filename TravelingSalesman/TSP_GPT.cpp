@@ -1,151 +1,127 @@
 #include <iostream>
 #include <vector>
-#include <limits>
+#include <algorithm>
 #include <random>
-#include <chrono>
 
 using namespace std;
 
-// Function to calculate the total tour distance
-double tourDistance(const vector<int>& tour, const vector<vector<double>>& graph) {
-    double totalDistance = 0.0;
-    int numCities = tour.size();
-    for (int i = 0; i < numCities; ++i) {
-        int j = (i + 1) % numCities;
-        totalDistance += graph[tour[i]][tour[j]];
-    }
-    return totalDistance;
-}
+// Define constants
+const int NUM_CITIES = 5;
+const int POPULATION_SIZE = 10;
+const int NUM_GENERATIONS = 1000;
+const double MUTATION_RATE = 0.1;
 
-// Function to initialize pheromone matrix
-void initializePheromones(vector<vector<double>>& pheromones, double initialValue) {
-    int numCities = pheromones.size();
-    for (int i = 0; i < numCities; ++i) {
-        for (int j = 0; j < numCities; ++j) {
-            pheromones[i][j] = initialValue;
+// Define type for representing tours
+using Tour = vector<int>;
+
+// Function to generate a random lower triangular adjacency matrix
+vector<vector<int>> generateRandomAdjacencyMatrix() {
+    vector<vector<int>> adjacencyMatrix(NUM_CITIES, vector<int>(NUM_CITIES, 0));
+    random_device rd;
+    mt19937 gen(rd());
+    uniform_int_distribution<int> dist(1, 100); // Adjust range as needed
+
+    for (int i = 0; i < NUM_CITIES; ++i) {
+        for (int j = i + 1; j < NUM_CITIES; ++j) {
+            adjacencyMatrix[i][j] = dist(gen);
         }
     }
+    return adjacencyMatrix;
 }
 
-// Function to update pheromones based on ant's tour
-void updatePheromones(vector<vector<double>>& pheromones, const vector<int>& tour, double evaporationRate, double Q) {
-    double tourLength = tourDistance(tour, pheromones);
-    int numCities = tour.size();
-
-    for (int i = 0; i < numCities; ++i) {
-        int j = (i + 1) % numCities;
-        pheromones[tour[i]][tour[j]] += Q / tourLength;
-        pheromones[tour[j]][tour[i]] += Q / tourLength;
+// Function to calculate tour length
+int calculateTourLength(const Tour& tour, const vector<vector<int>>& adjacencyMatrix) {
+    int length = 0;
+    for (int i = 0; i < NUM_CITIES - 1; ++i) {
+        length += adjacencyMatrix[tour[i]][tour[i + 1]];
     }
-
-    for (int i = 0; i < numCities; ++i) {
-        for (int j = 0; j < numCities; ++j) {
-            pheromones[i][j] *= (1.0 - evaporationRate);
-        }
-    }
+    length += adjacencyMatrix[tour[NUM_CITIES - 1]][tour[0]]; // Return to the starting city
+    return length;
 }
 
-// Function to select the next city based on pheromone trails and heuristic information
-int selectNextCity(int currentCity, const vector<vector<double>>& pheromones, const vector<vector<double>>& graph, const vector<bool>& visited, double alpha, double beta) {
-    int numCities = graph.size();
-    double totalProbability = 0.0;
-    vector<double> probabilities(numCities, 0.0);
-
-    for (int i = 0; i < numCities; ++i) {
-        if (!visited[i]) {
-            probabilities[i] = pow(pheromones[currentCity][i], alpha) * pow(1.0 / graph[currentCity][i], beta);
-            totalProbability += probabilities[i];
-        }
+// Function to initialize a random tour
+Tour generateRandomTour() {
+    Tour tour(NUM_CITIES);
+    for (int i = 0; i < NUM_CITIES; ++i) {
+        tour[i] = i;
     }
-    std::default_random_engine generator;
-    uniform_real_distribution<double> distribution(0.0, totalProbability);
-    double randomValue = distribution(generator);
-
-    double cumulativeProbability = 0.0;
-    for (int i = 0; i < numCities; ++i) {
-        if (!visited[i]) {
-            cumulativeProbability += probabilities[i];
-            if (cumulativeProbability >= randomValue) {
-                return i;
-            }
-        }
-    }
-
-    return -1; // Error: should not reach here
-}
-
-// Function to construct a solution (tour) using ant colony optimization
-vector<int> constructSolution(const vector<vector<double>>& pheromones, const vector<vector<double>>& graph, double alpha, double beta) {
-    int numCities = graph.size();
-    vector<bool> visited(numCities, false);
-    vector<int> tour(numCities, -1);
-    std::default_random_engine generator;
-    // Start from a random city
-    uniform_int_distribution<int> distribution(0, numCities - 1);
-    int initialCity = distribution(generator);
-    tour[0] = initialCity;
-    visited[initialCity] = true;
-
-    // Construct the rest of the tour
-    for (int i = 1; i < numCities; ++i) {
-        int currentCity = tour[i - 1];
-        int nextCity = selectNextCity(currentCity, pheromones, graph, visited, alpha, beta);
-        tour[i] = nextCity;
-        visited[nextCity] = true;
-    }
-
+    random_shuffle(tour.begin() + 1, tour.end());
     return tour;
 }
 
-// Function to perform ant colony optimization for the TSP
-vector<int> solveACO(const vector<vector<double>>& graph, int numAnts, int numIterations, double evaporationRate, double alpha, double beta, double Q) {
-    int numCities = graph.size();
-    vector<vector<double>> pheromones(numCities, vector<double>(numCities, 1.0));
-    initializePheromones(pheromones, 1.0);
-
-    vector<int> bestTour;
-    double bestTourLength = numeric_limits<double>::infinity();
-
-    for (int iter = 0; iter < numIterations; ++iter) {
-        for (int ant = 0; ant < numAnts; ++ant) {
-            vector<int> tour = constructSolution(pheromones, graph, alpha, beta);
-            double tourLength = tourDistance(tour, graph);
-            if (tourLength < bestTourLength) {
-                bestTourLength = tourLength;
-                bestTour = tour;
-            }
-            updatePheromones(pheromones, tour, evaporationRate, Q);
-        }
+// Genetic algorithm function
+Tour solveTSPGenetic(const vector<vector<int>>& adjacencyMatrix) {
+    // Initialize population
+    vector<Tour> population;
+    for (int i = 0; i < POPULATION_SIZE; ++i) {
+        population.push_back(generateRandomTour());
     }
 
-    return bestTour;
+    // Main loop
+    for (int gen = 0; gen < NUM_GENERATIONS; ++gen) {
+        // Evaluate fitness
+        vector<pair<int, Tour>> fitness;
+        for (const auto& tour : population) {
+            fitness.push_back({calculateTourLength(tour, adjacencyMatrix), tour});
+        }
+        sort(fitness.begin(), fitness.end());
+
+        // Select parents (roulette wheel selection)
+        vector<Tour> parents;
+        for (int i = 0; i < POPULATION_SIZE / 2; ++i) {
+            int idx1 = rand() % POPULATION_SIZE;
+            int idx2 = rand() % POPULATION_SIZE;
+            parents.push_back(fitness[idx1].second);
+            parents.push_back(fitness[idx2].second);
+        }
+
+        // Crossover (partially mapped crossover)
+        vector<Tour> offspring;
+        for (int i = 0; i < POPULATION_SIZE / 2; ++i) {
+            int crossoverPoint = rand() % (NUM_CITIES - 1) + 1;
+            Tour parent1 = parents[i];
+            Tour parent2 = parents[i + 1];
+            Tour child1 = parent1;
+            Tour child2 = parent2;
+            for (int j = 0; j < crossoverPoint; ++j) {
+                auto it1 = find(child1.begin(), child1.end(), parent2[j]);
+                auto it2 = find(child2.begin(), child2.end(), parent1[j]);
+                iter_swap(it1, it2);
+            }
+            offspring.push_back(child1);
+            offspring.push_back(child2);
+        }
+
+        // Mutation
+        for (auto& tour : offspring) {
+            if ((double)rand() / RAND_MAX < MUTATION_RATE) {
+                int idx1 = rand() % NUM_CITIES;
+                int idx2 = rand() % NUM_CITIES;
+                swap(tour[idx1], tour[idx2]);
+            }
+        }
+
+        // Replace population with offspring
+        population = offspring;
+    }
+
+    // Return the best tour
+    return fitness[0].second;
 }
 
 int main() {
-    // Example usage
-    vector<vector<double>> graph = {{0, 10, 15, 20},
-                                     {10, 0, 35, 25},
-                                     {15, 35, 0, 30},
-                                     {20, 25, 30, 0}};
-    int numAnts = 10;
-    int numIterations = 100;
-    double evaporationRate = 0.1;
-    double alpha = 1.0;
-    double beta = 2.0;
-    double Q = 1.0;
+    // Generate a random lower triangular adjacency matrix
+    vector<vector<int>> adjacencyMatrix = generateRandomAdjacencyMatrix();
 
-    auto start = chrono::steady_clock::now();
-    vector<int> bestTour = solveACO(graph, numAnts, numIterations, evaporationRate, alpha, beta, Q);
-    auto end = chrono::steady_clock::now();
+    // Solve TSP using genetic algorithm
+    Tour bestTour = solveTSPGenetic(adjacencyMatrix);
 
-    cout << "Best tour found: ";
+    // Output the best tour
+    cout << "Best tour: ";
     for (int city : bestTour) {
         cout << city << " ";
     }
     cout << endl;
-    cout << "Length of the tour: " << tourDistance(bestTour, graph) << endl;
-
-    cout << "Time taken: " << chrono::duration_cast<chrono::milliseconds>(end - start).count() << " milliseconds" << endl;
 
     return 0;
 }
